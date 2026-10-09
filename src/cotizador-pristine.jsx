@@ -570,6 +570,7 @@ export default function CotizadorPristine({ usuario, cotizacionInicial, volver }
 
   const [operadores, setOperadores] = useState(DEFAULT_OPERADORES);
   const [showOperadores, setShowOperadores] = useState(false);
+  const [showDatosAgencia, setShowDatosAgencia] = useState(false);
   const [nuevoOpNombre, setNuevoOpNombre] = useState("");
   const [nuevoOpPctGasto, setNuevoOpPctGasto] = useState("");
   const [nuevoOpReserva, setNuevoOpReserva] = useState("");
@@ -611,6 +612,7 @@ export default function CotizadorPristine({ usuario, cotizacionInicial, volver }
   const [clienteGuardadoEstado, setClienteGuardadoEstado] = useState("idle"); // idle | saving | saved | error
   const [clienteIdSeleccionado, setClienteIdSeleccionado] = useState(null);  // uuid del cliente en BD
   const [pasajeroGuardadoEstado, setPasajeroGuardadoEstado] = useState({}); // { familiaId | "titular": "idle|saving|saved|error" }
+  const [pasajerosLista, setPasajerosLista] = useState([]); // lista de pasajeros adicionales al titular
 
   // ---- Sistema de guardado de cotizaciones ----
   const [cotizaciones, setCotizaciones] = useState([]);
@@ -1094,6 +1096,12 @@ export default function CotizadorPristine({ usuario, cotizacionInicial, volver }
     setItems((prev) => prev.map((it) => (it.familiaId === id ? { ...it, familiaId: "" } : it)));
   }
 
+  // ---- Pasajeros adicionales ----
+  const PASAJERO_VACIO = () => ({ id: uid("pax"), nombre: "", documento: "", tel: "", email: "", cuit: "", localidad: "", fechaNac: "", genero: "" });
+  function addPasajero() { setPasajerosLista((prev) => [...prev, PASAJERO_VACIO()]); }
+  function removePasajero(id) { setPasajerosLista((prev) => prev.filter((p) => p.id !== id)); }
+  function updatePasajero(id, campo, valor) { setPasajerosLista((prev) => prev.map((p) => p.id === id ? { ...p, [campo]: valor } : p)); }
+
   // ---- Sistema de guardado de cotizaciones ----
   function buildCotState() {
     return {
@@ -1122,6 +1130,7 @@ export default function CotizadorPristine({ usuario, cotizacionInicial, volver }
       opcionConfirmada,
       opcionesConfirmadasPorFamilia,
       titularGeneral,
+      pasajerosLista,
       pagosOperadores,
       cobrosClientes,
       bulkTipoHabitacion,
@@ -1303,6 +1312,26 @@ export default function CotizadorPristine({ usuario, cotizacionInicial, volver }
         await upsertPasajero(payload);
       }
     }
+
+    // Pasajeros adicionales (siempre, independiente de si hay familias)
+    for (const pax of pasajerosLista) {
+      if (!pax.nombre && !pax.documento) continue;
+      const partes = (pax.nombre || "").trim().split(/\s+/);
+      const payloadPax = {
+        agencia_id: agenciaId,
+        ...(resolvedClienteId ? { cliente_id: resolvedClienteId } : {}),
+        apellido: partes[partes.length - 1] || pax.nombre || "—",
+        nombres: partes.slice(0, -1).join(" ") || "",
+        nro_documento: pax.documento || null,
+        tipo_doc: pax.documento ? "DNI" : null,
+        telefono: pax.tel || null,
+        ...(pax.email ? { email: pax.email } : {}),
+        ...(pax.localidad ? { localidad: pax.localidad } : {}),
+        ...(pax.fechaNac ? { fecha_nacimiento: pax.fechaNac } : {}),
+        ...(pax.genero ? { genero: pax.genero } : {}),
+      };
+      await upsertPasajero(payloadPax);
+    }
   }
 
   function triggerAutoSave() {
@@ -1336,6 +1365,7 @@ export default function CotizadorPristine({ usuario, cotizacionInicial, volver }
     const confLimpia = Object.fromEntries(Object.entries(confCargada).filter(([, v]) => v !== "unico"));
     setOpcionesConfirmadasPorFamilia(confLimpia);
     setTitularGeneral(state.titularGeneral || { nombre: "", documento: "", tel: "", email: "", cuit: "", localidad: "" });
+    setPasajerosLista(state.pasajerosLista || []);
     setPagosOperadores(state.pagosOperadores || {});
     setCobrosClientes(state.cobrosClientes || {});
     setBulkTipoHabitacion(state.bulkTipoHabitacion || "");
@@ -1383,6 +1413,7 @@ export default function CotizadorPristine({ usuario, cotizacionInicial, volver }
     setOpcionConfirmada(null);
     setOpcionesConfirmadasPorFamilia({});
     setTitularGeneral({ nombre: "", documento: "", tel: "", email: "", cuit: "", localidad: "" });
+    setPasajerosLista([]);
     setPagosOperadores({});
     setCobrosClientes({});
     setBulkTipoHabitacion("");
@@ -1418,6 +1449,7 @@ export default function CotizadorPristine({ usuario, cotizacionInicial, volver }
     setOpcionConfirmada(null);
     setOpcionesConfirmadasPorFamilia({});
     setTitularGeneral({ nombre: "", documento: "", tel: "", email: "", cuit: "", localidad: "" });
+    setPasajerosLista([]);
     setPagosOperadores({});
     setCobrosClientes({});
     setUltimoGuardado(null);
@@ -2756,15 +2788,14 @@ ${(datosAgencia.nombre || datosAgencia.telefono || datosAgencia.email || datosAg
     try {
       const html = buildVistaImpresionHtml(modo);
       if (!html) { alert("No se pudo generar el documento. Verificá que la cotización tenga datos."); return; }
-      const blob = new Blob([html], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = buildNombreArchivo(modo);
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      const ventana = window.open("", "_blank");
+      if (!ventana) {
+        alert("El navegador bloqueó la ventana emergente. Permití las ventanas emergentes para este sitio y volvé a intentar.");
+        return;
+      }
+      ventana.document.open();
+      ventana.document.write(html);
+      ventana.document.close();
     } catch(e) {
       alert("Error al generar el documento: " + e.message);
       console.error(e);
@@ -3047,7 +3078,7 @@ ${(datosAgencia.nombre || datosAgencia.telefono || datosAgencia.email || datosAg
           <button className="btn-secondary" onClick={() => { setShowPanelCotizaciones((s) => !s); loadCotizaciones(); }}>
             Cotizaciones
           </button>
-          <button className="btn-secondary" onClick={nuevaCotizacion}>
+          <button className="btn-secondary" onClick={() => window.open(window.location.href, "_blank")}>
             Nueva
           </button>
           <button className="btn-secondary" onClick={replicarCotizacion} title="Copia los servicios sin valores para ajustar">
@@ -3324,6 +3355,60 @@ ${(datosAgencia.nombre || datosAgencia.telefono || datosAgencia.email || datosAg
                 <input value={titularGeneral.localidad || ""} onChange={(e) => setTitularGeneral((t) => ({ ...t, localidad: e.target.value }))} placeholder="Ej: Buenos Aires" />
               </div>
             </div>
+
+            {/* Pasajeros adicionales */}
+            <div style={{ marginTop: 18 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <span className="section-title" style={{ margin: 0 }}>Pasajeros</span>
+                <span style={{ fontSize: 12, color: "var(--text-soft)", fontWeight: 400 }}>además del titular</span>
+              </div>
+              {pasajerosLista.length === 0 && (
+                <p style={{ fontSize: 12, color: "var(--text-soft)", margin: "0 0 10px" }}>No hay pasajeros cargados todavía.</p>
+              )}
+              {pasajerosLista.map((pax, idx) => (
+                <div key={pax.id} style={{ background: "var(--bg-soft)", borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-soft)" }}>Pasajero {idx + 1}</span>
+                    <button className="btn-icon" onClick={() => removePasajero(pax.id)}><Trash2 size={14} /></button>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8 }}>
+                    <div>
+                      <span className="field-label">Nombre completo *</span>
+                      <input value={pax.nombre} onChange={(e) => updatePasajero(pax.id, "nombre", e.target.value)} placeholder="Nombre y apellido" />
+                    </div>
+                    <div>
+                      <span className="field-label">DNI</span>
+                      <input value={pax.documento} onChange={(e) => updatePasajero(pax.id, "documento", e.target.value)} placeholder="Ej: 30123456" />
+                    </div>
+                    <div>
+                      <span className="field-label">WhatsApp <span style={{ fontWeight: 400 }}>(cód. de país)</span></span>
+                      <input value={pax.tel} onChange={(e) => updatePasajero(pax.id, "tel", e.target.value)} placeholder="5491156781234" />
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
+                    <div>
+                      <span className="field-label">CUIT / CUIL <span style={{ fontWeight: 400, color: "var(--text-soft)" }}>(opc.)</span></span>
+                      <input value={pax.cuit} onChange={(e) => updatePasajero(pax.id, "cuit", e.target.value)} placeholder="20-30123456-1" />
+                    </div>
+                    <div>
+                      <span className="field-label">Email <span style={{ fontWeight: 400, color: "var(--text-soft)" }}>(opc.)</span></span>
+                      <input type="email" value={pax.email} onChange={(e) => updatePasajero(pax.id, "email", e.target.value)} placeholder="pax@email.com" />
+                    </div>
+                    <div>
+                      <span className="field-label">Localidad <span style={{ fontWeight: 400, color: "var(--text-soft)" }}>(opc.)</span></span>
+                      <input value={pax.localidad} onChange={(e) => updatePasajero(pax.id, "localidad", e.target.value)} placeholder="Ej: Córdoba" />
+                    </div>
+                    <div>
+                      <span className="field-label">Fecha de nac. <span style={{ fontWeight: 400, color: "var(--text-soft)" }}>(opc.)</span></span>
+                      <input type="date" value={pax.fechaNac} onChange={(e) => updatePasajero(pax.id, "fechaNac", e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <button className="btn-secondary" style={{ marginTop: 4 }} onClick={addPasajero}>
+                <Plus size={13} /> Agregar pasajero
+              </button>
+            </div>
           </div>
         )}
         <div style={{ marginTop: 14 }} className="no-print">
@@ -3469,36 +3554,48 @@ ${(datosAgencia.nombre || datosAgencia.telefono || datosAgencia.email || datosAg
       </div>
 
       <div className="card no-print">
-        <div className="section-title" style={{ marginBottom: 12 }}>
+        <div className="section-title" style={{ cursor: "pointer", userSelect: "none" }} onClick={() => setShowDatosAgencia((s) => !s)}>
           Datos de la agencia
           <span style={{ fontSize: 11, color: "#6470A0", fontWeight: 400, marginLeft: 8 }}>
             Aparecen en el pie del documento al pasajero y la liquidación
           </span>
+          <span className="toggle" style={{ marginLeft: "auto" }}>
+            {showDatosAgencia ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </span>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          {[
-            ["nombre",    "Nombre de la agencia", "Agencia de Viajes S.A."],
-            ["direccion", "Dirección",             "Av. Corrientes 1234, Buenos Aires"],
-            ["telefono",  "Teléfono",              "+54 11 1234-5678"],
-            ["email",     "Email",                 "info@agencia.com"],
-            ["web",       "Sitio web",             "www.agencia.com"],
-            ["eslogan",   "Eslogan (opcional)",    "Tu eslogan"],
-            ["leyenda",   "Leyenda al pie del documento al pasajero (opcional)", "Ej: Legajo 0000 · Años de trayectoria"],
-          ].map(([campo, label, placeholder]) => (
-            <div key={campo} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span className="field-label" style={{ marginBottom: 2 }}>{label}</span>
-              <input
-                className="input-field"
-                value={datosAgencia[campo] || ""}
-                placeholder={placeholder}
-                onChange={(e) => persistDatosAgencia({ ...datosAgencia, [campo]: e.target.value })}
-              />
+        {!showDatosAgencia && datosAgencia.nombre && (
+          <div style={{ fontSize: 12, color: "#6470A0", marginTop: 4 }}>
+            {datosAgencia.nombre}{datosAgencia.telefono ? ` · ${datosAgencia.telefono}` : ""}{datosAgencia.email ? ` · ${datosAgencia.email}` : ""}
+          </div>
+        )}
+        {showDatosAgencia && (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+              {[
+                ["nombre",    "Nombre de la agencia", "Agencia de Viajes S.A."],
+                ["direccion", "Dirección",             "Av. Corrientes 1234, Buenos Aires"],
+                ["telefono",  "Teléfono",              "+54 11 1234-5678"],
+                ["email",     "Email",                 "info@agencia.com"],
+                ["web",       "Sitio web",             "www.agencia.com"],
+                ["eslogan",   "Eslogan (opcional)",    "Tu eslogan"],
+                ["leyenda",   "Leyenda al pie del documento al pasajero (opcional)", "Ej: Legajo 0000 · Años de trayectoria"],
+              ].map(([campo, label, placeholder]) => (
+                <div key={campo} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="field-label" style={{ marginBottom: 2 }}>{label}</span>
+                  <input
+                    className="input-field"
+                    value={datosAgencia[campo] || ""}
+                    placeholder={placeholder}
+                    onChange={(e) => persistDatosAgencia({ ...datosAgencia, [campo]: e.target.value })}
+                  />
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div style={{ marginTop: 10, fontSize: 11, color: "#9CA3AF" }}>
-          Se guardan automáticamente al escribir.
-        </div>
+            <div style={{ marginTop: 10, fontSize: 11, color: "#9CA3AF" }}>
+              Se guardan automáticamente al escribir.
+            </div>
+          </>
+        )}
       </div>
 
       {/* OPERADORES */}

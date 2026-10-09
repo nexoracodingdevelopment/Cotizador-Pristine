@@ -73,6 +73,40 @@ export default function App() {
   const [cotizacionAbierta, setCotizacionAbierta] = useState(null);
   const [resetMode, setResetMode] = useState(false);
 
+  // Al arrancar: recuperar sesión existente de Supabase y saltar el login
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) return; // no hay sesión → queda en login
+
+      const { data: perfil } = await supabase
+        .from("usuarios")
+        .select("id, empresa, contacto, usuario, email, rol, activo, agencia_id")
+        .eq("id", session.user.id)
+        .single();
+
+      if (!perfil || !perfil.activo) return; // perfil inválido → login
+
+      setUsuarioActual(perfil);
+
+      // Leer el hash en este momento exacto, después de tener el perfil
+      const hash = window.location.hash.replace("#", "");
+      if (hash === "cotizador") {
+        setPantalla("cotizador");
+      } else if (perfil.rol === "admin") {
+        setPantalla("admin");
+      } else {
+        setPantalla("dashboard");
+      }
+    });
+  }, []);
+
+  // Actualizar hash cuando cambia la pantalla (no tocar URL mientras login)
+  useEffect(() => {
+    if (pantalla !== "login") {
+      window.location.hash = pantalla;
+    }
+  }, [pantalla]);
+
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") {
@@ -92,6 +126,14 @@ export default function App() {
     return usuarioActual?.rol === "admin" ? "admin" : "dashboard";
   }
 
+  function irAlCotizador() {
+    setPantalla("cotizador");
+  }
+
+  function nuevaCotizacionEnPestaña() {
+    window.open(window.location.origin + window.location.pathname + "#cotizador", "_blank");
+  }
+
   if (resetMode) {
     return <NuevaPassword onDone={() => { setResetMode(false); setPantalla("login"); }} />;
   }
@@ -102,7 +144,12 @@ export default function App() {
       <Login
         onLogin={(rol, userData) => {
           setUsuarioActual(userData);
-          if (rol === "admin") {
+          // Si había una intención de abrir cotizador (pestaña nueva), ir directo
+          const pending = sessionStorage.getItem("pendingHash");
+          sessionStorage.removeItem("pendingHash");
+          if (pending === "cotizador") {
+            setPantalla("cotizador");
+          } else if (rol === "admin") {
             setPantalla("admin");
           } else {
             setPantalla("dashboard");
@@ -118,7 +165,7 @@ export default function App() {
       <Admin
         usuario={usuarioActual}
         nuevoUsuario={() => setPantalla("nuevo")}
-        nuevaCotizacion={() => setPantalla("cotizador")}
+        nuevaCotizacion={nuevaCotizacionEnPestaña}
         cerrarSesion={cerrarSesion}
         gestionarUsuarios={() => setPantalla("gestionar")}
         historial={() => setPantalla("historial")}
@@ -133,7 +180,7 @@ export default function App() {
     return (
       <Dashboard
         usuario={usuarioActual}
-        nuevaCotizacion={() => setPantalla("cotizador")}
+        nuevaCotizacion={nuevaCotizacionEnPestaña}
         cerrarSesion={cerrarSesion}
         miCuenta={() => setPantalla("cuenta")}
         historial={() => setPantalla("historial")}
@@ -159,7 +206,14 @@ export default function App() {
         cotizacionInicial={cotizacionAbierta}
         volver={() => {
           setCotizacionAbierta(null);
-          setPantalla(pantallaAnterior());
+          // Si esta pestaña fue abierta desde dashboard, cerrarla o ir al dashboard
+          const esTabNueva = sessionStorage.getItem("pendingHash") === null &&
+            window.history.length <= 2;
+          if (esTabNueva) {
+            window.close();
+          } else {
+            setPantalla(pantallaAnterior());
+          }
         }}
       />
     );
