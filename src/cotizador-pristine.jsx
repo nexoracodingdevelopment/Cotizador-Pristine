@@ -315,7 +315,7 @@ function FilaPago({ pago, monedaCot, onUpdate, onRemove }) {
 
   function parseImporte(s) {
     if (!s && s !== 0) return 0;
-    return parseFloat(String(s).replace(/\./g, "").replace(",", ".")) || 0;
+    return parseImporteTexto(s);
   }
 
   function fmtImporte(valor, moneda) {
@@ -502,6 +502,16 @@ function ComboField({ value, options, onSelect, createLabel }) {
 
 
 
+// Interpreta un importe tipeado a mano (es-AR: punto=miles, coma=decimal).
+// Si no hay coma y hay un único punto con 1-2 dígitos al final, lo toma como decimal (ej: "64.35").
+function parseImporteTexto(valor) {
+  const raw = String(valor == null ? "" : valor).trim();
+  if (!raw) return 0;
+  if (raw.includes(",")) return parseFloat(raw.replace(/\./g, "").replace(",", ".")) || 0;
+  if (/\.\d{1,2}$/.test(raw) && (raw.match(/\./g) || []).length === 1) return parseFloat(raw) || 0;
+  return parseFloat(raw.replace(/\./g, "")) || 0;
+}
+
 // Input de importe con separadores de miles (punto) y decimales (coma) — formato es-AR
 function ImporteInput({ value, onChange, placeholder, style, disabled }) {
   const [display, setDisplay] = React.useState("");
@@ -509,7 +519,8 @@ function ImporteInput({ value, onChange, placeholder, style, disabled }) {
 
   React.useEffect(() => {
     if (!focused) {
-      const n = parseFloat(String(value).replace(/\./g, "").replace(",", ".")) || parseFloat(value) || 0;
+      // El value interno siempre es un número JS (punto decimal, sin miles)
+      const n = parseFloat(value) || 0;
       setDisplay(n === 0 && !value ? "" : n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
     }
   }, [value, focused]);
@@ -517,7 +528,7 @@ function ImporteInput({ value, onChange, placeholder, style, disabled }) {
   function handleFocus(e) {
     setFocused(true);
     // Mostrar valor sin formato para edición
-    const n = parseFloat(String(value).replace(/\./g, "").replace(",", ".")) || parseFloat(value) || 0;
+    const n = parseFloat(value) || 0;
     setDisplay(n === 0 ? "" : String(n));
     setTimeout(() => e.target.select(), 0);
   }
@@ -530,9 +541,9 @@ function ImporteInput({ value, onChange, placeholder, style, disabled }) {
 
   function handleBlur() {
     setFocused(false);
-    // Parsear lo que escribió — acepta tanto punto como coma para decimales
-    const raw = display.replace(/\./g, "").replace(",", ".");
-    const n = parseFloat(raw) || 0;
+    // Parsear respetando separadores es-AR (punto=miles, coma=decimal)
+    // También acepta punto como decimal si no hay coma (ej: "64.35")
+    const n = parseImporteTexto(display);
     onChange(n === 0 ? "" : String(n));
     setDisplay(n === 0 && !display ? "" : n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
   }
@@ -2619,11 +2630,11 @@ ${(datosAgencia.nombre || datosAgencia.telefono || datosAgencia.email || datosAg
 
   function montoEfectivoOperador(opId) {
     const aj = pagosOperadores[opId]?.montoAjustado;
-    return aj != null && aj !== "" ? parseFloat(aj) : montoCalculadoOperador(opId);
+    return aj != null && aj !== "" ? parseImporteTexto(aj) : montoCalculadoOperador(opId);
   }
 
   function convertirAMonedaCot(importe, monedaPago, tipoCambio) {
-    const imp = parseFloat(String(importe || "0").replace(/\./g, "").replace(",", ".")) || 0;
+    const imp = parseImporteTexto(importe);
     if (monedaPago === moneda) return imp;
     const tc = parseFloat(tipoCambio) || 1;
     if (moneda === "USD" && monedaPago === "ARS") return imp / tc;
@@ -4214,7 +4225,7 @@ ${(datosAgencia.nombre || datosAgencia.telefono || datosAgencia.email || datosAg
               const pagosOp = pagosOperadores[opId]?.pagos || [];
               const ajustado = pagosOperadores[opId]?.montoAjustado;
               const editingMonto = editingMontoOpId === opId;
-              const fmtMonto = (v) => v != null && v !== "" ? `${mFmt.prefix} ${parseFloat(String(v).replace(/\./g,"").replace(",",".")).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "";
+              const fmtMonto = (v) => v != null && v !== "" ? `${mFmt.prefix} ${parseImporteTexto(v).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "";
               return (
                 <div className="modulo-operador" key={opId}>
                   <div className="modulo-operador-header">
@@ -4291,13 +4302,13 @@ ${(datosAgencia.nombre || datosAgencia.telefono || datosAgencia.email || datosAg
                     const itemsReales = pagosOperadores[opId]?.itemsReales || {};
                     const gastoRes = parseFloat(op.gastoReserva) || 0;
                     const gastoResReal = itemsReales["gastoRes"] !== undefined && itemsReales["gastoRes"] !== ""
-                      ? parseFloat(String(itemsReales["gastoRes"]).replace(/\./g,"").replace(",",".")) || 0
+                      ? parseFloat(itemsReales["gastoRes"]) || 0
                       : gastoRes;
                     const fmt2 = (n) => `${mFmt.prefix} ${n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                     let sumRealItems = 0;
                     filas.forEach((f, i) => {
                       const rv = itemsReales[i];
-                      sumRealItems += rv !== undefined && rv !== "" ? parseFloat(String(rv).replace(/\./g,"").replace(",",".")) || 0 : f.total;
+                      sumRealItems += rv !== undefined && rv !== "" ? parseFloat(rv) || 0 : f.total;
                     });
                     const sumRealTotal = sumRealItems + gastoResReal;
                     const showReal = showDetalleReal?.[opId] || false;
@@ -4375,7 +4386,7 @@ ${(datosAgencia.nombre || datosAgencia.telefono || datosAgencia.email || datosAg
                                 <tbody>
                                   {filas.map((f, i) => {
                                     const rv = itemsReales[i];
-                                    const realN = rv !== undefined && rv !== "" ? parseFloat(String(rv).replace(/\./g,"").replace(",",".")) || 0 : f.total;
+                                    const realN = rv !== undefined && rv !== "" ? parseFloat(rv) || 0 : f.total;
                                     const diff = realN - f.total;
                                     return (
                                       <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : "var(--bg)", borderBottom: "1px solid var(--border)" }}>
